@@ -1,0 +1,33 @@
+services:
+  mongo:
+    container_name: bbspriest-db
+    image: mongo:latest
+    expose:
+    # ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo
+      MONGO_INITDB_ROOT_PASSWORD: securepassword123
+    volumes:
+      - mongo_data:/data/db
+    restart: always
+
+  bbspriest:
+    container_name: bbspriest
+    build: .
+    environment:
+      DB_USER: mongo
+      DB_PASS: securepassword123
+      DB_HOST: mongo
+    ports:
+      - "9999:9999"
+    restart: always
+    depends_on:
+      - mongo
+
+
+networks:
+  default:
+    name: bbspriest
+volumes:
+  mongo_data:

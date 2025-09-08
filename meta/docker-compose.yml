@@ -1,0 +1,6 @@
+services:
+  modulebuilder:
+    build: .
+    volumes:
+      - ./out:/service/out:rw
+

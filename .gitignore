@@ -1,0 +1,11 @@
+checker/src/__pycache__
+service/src/__pycache__
+checker/src/plsreadable.py
+service/src/test.py
+service/src/testCrypto.sage.py
+service/src/testCrypto.sage
+service/src/testInteract.py
+meta/.cache/clangd/index
+meta/a.out
+meta/compile_commands.json
+meta/build
