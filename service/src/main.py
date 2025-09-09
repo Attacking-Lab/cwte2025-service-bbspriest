@@ -60,7 +60,8 @@ class ThreadedTCPRequestHandler(socketserver.StreamRequestHandler):
 		self.wfile.write(b'Confess your unforgivable sins\n')
 		frequentSins = [
 			'I put pineapple on pizza',
-			'I am speedrunnning the CTF iceberg meme'
+			'I am speedrunnning the CTF iceberg meme',
+			'Confess custom sin'
 		]
 		pick = self.promptNumber(b'Frequently Confessed Sins:\n' + b''.join([f'({idx}) {sin}\n'.encode() for idx, sin in enumerate(frequentSins)]))
 

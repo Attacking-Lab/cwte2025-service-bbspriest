@@ -14,7 +14,7 @@ from typing import Optional, cast, Any
 from logging import LoggerAdapter
 from secrets import randbits
 from string import ascii_letters, digits
-from hashlib import sha256
+from hashlib import sha256, sha3_256
 
 from connectionInterface import Session
 from crypto import *
@@ -31,6 +31,11 @@ frequentSins = [
 	'I leaked flags in the discord',
 	'I don\'t know what mvm means',
 	'I abused university clusters to brute',
+]
+
+frequentUnforgiveableSins = [
+	'I put pineapple on pizza',
+	'I am speedrunnning the CTF iceberg meme',
 ]
 
 
@@ -111,6 +116,36 @@ async def confessSin(sin: bytes, client: Session, logger: LoggerAdapter):
 
 	return sinId, absolutionSignature
 
+async def confessUnforgiveableSin(sin: bytes, client: Session, logger: LoggerAdapter):
+	# TODO: maybe validate that output is correct in a better manner?
+	try:
+		banner = await client.recvuntil(b'> ')
+		assert b'555-123' in banner, 'bad banner'
+
+		client.sendline(b'1')
+		resp = await client.recvuntil(b'> ')
+		assert b'pineapple' in resp, 'bad frequent unforgiveable sin list'
+
+		client.sendline(b'2')
+		await client.recvuntil(b'> ')
+		client.sendline(sin)
+
+		resp = await client.recvuntil(b'-Gaspare.\n')
+		sinIdLine = await client.recvline()
+		sinId = sinIdLine.split(b': ')[1].strip(b'\n.')
+		decryptionKeyLine = await client.recvline()
+		decryptionKey = decryptionKeyLine.split(b': ')[1].strip(b'\n.')
+	except AssertionError:
+		logger.critical('Service behaved wrongly while accepting unforgiveable sin confession')
+		raise MumbleException('Failed to confess unforgiveable sin')
+
+	# try:
+	# 	assert sinId.decode() == sha3_256(sin).hexdigest()
+	# except:
+	# 	raise MumbleException('Wrong signature')
+
+	return sinId, decryptionKey
+
 async def retrieveSin(sinId: bytes, sig: bytes, client: Session, logger: LoggerAdapter):
 	# TODO: maybe validate that output is correct in a better manner?
 	try:
@@ -125,6 +160,26 @@ async def retrieveSin(sinId: bytes, sig: bytes, client: Session, logger: LoggerA
 		resp = await client.recvuntil(b'> ')
 		assert b'signature' in resp
 		client.sendline(sig)
+
+		ret = await client.recvline()
+		return ret
+	except AssertionError:
+		logger.critical('Service behaved wrongly while looking up sin confession')
+		raise MumbleException('Failed to retrieve sin')
+
+async def retrieveUnforgiveableSin(sinId: bytes, decryptionKey: bytes, client: Session, logger: LoggerAdapter):
+	try:
+		banner = await client.recvuntil(b'> ')
+		assert b'555-123' in banner
+
+		client.sendline(b'3')
+		resp = await client.recvuntil(b'> ')
+		assert b'an unforgivable sin' in resp, 'Couldn\'t use option 3'
+
+		client.sendline(sinId)
+		resp = await client.recvuntil(b'> ')
+		assert b'Found confession' in resp, 'Confession not found' # TODO: maybe make sure the service isn't lying about finding a confession?
+		client.sendline(decryptionKey)
 
 		ret = await client.recvline()
 		return ret
@@ -209,9 +264,41 @@ async def confessGiven(client: Session, logger: LoggerAdapter, sinIdx: int, pubk
 
 	return sin, sinId, absolutionSignature
 
+async def confessUnforgiveableGiven(client: Session, logger: LoggerAdapter, sinIdx: int):
+	try:
+		banner = await client.recvuntil(b'> ')
+		assert b'555-123' in banner
+
+		client.sendline(b'1')
+		resp = await client.recvuntil(b'> ')
+		assert b'pineapple' in resp
+
+		sin = frequentUnforgiveableSins[sinIdx].encode()
+		client.sendline(str(sinIdx).encode())
+
+		resp = await client.recvuntil(b'-Gaspare.\n')
+		sinIdLine = await client.recvline()
+		sinId = sinIdLine.split(b': ')[1].strip(b'\n.')
+		decryptionKeyLine = await client.recvline()
+		decryptionKey = decryptionKeyLine.split(b': ')[1].strip(b'\n.')
+	except AssertionError:
+		logger.critical('Service behaved wrongly while accepting unforgiveable sin confession')
+		raise MumbleException('Failed to confess unforgiveable sin')
+
+	# try:
+	# 	assert sinId.decode() == sha3_256(sin).hexdigest()
+	# except:
+	# 	raise MumbleException('Wrong signature')
+
+	return sinId, decryptionKey
+
 async def confessRandom(client: Session, logger: LoggerAdapter, random: Random, pubkey: Point):
 	sinIdx = random.randrange(len(frequentSins))
 	return await confessGiven(client, logger, sinIdx, pubkey)
+
+async def confessUnforgiveableRandom(client: Session, logger: LoggerAdapter, random: Random):
+	sinIdx = random.randrange(len(frequentUnforgiveableSins))
+	return await confessUnforgiveableGiven(client, logger, sinIdx)
 
 @checker.register_dependency
 def _get_session(socket: AsyncSocket, logger: LoggerAdapter) -> Session:
@@ -235,13 +322,30 @@ async def putflag0(task: PutflagCheckerTaskMessage, logger: LoggerAdapter, di: D
 	await db.set('sig', (sinId, absolutionSignature))
 	return sinId.decode()
 
-@checker.getflag(0)
+@checker.getflag(0) # TODO: also support partial lookups
 async def getflag0(task: GetflagCheckerTaskMessage, logger: LoggerAdapter, di: DependencyInjector) -> None:
 	db = await di.get(ChainDB)
 	sinId, absolutionSignature = cast(tuple[bytes, bytes], await getdb(db, 'sig'))
 
 	client = await di.get(Session)
 	flagString = await retrieveSin(sinId, absolutionSignature, client, logger)
+
+	assert_in(task.flag.encode(), flagString, 'Failed to retrieve flag')
+
+@checker.putflag(1)
+async def putflag1(task: PutflagCheckerTaskMessage, logger: LoggerAdapter, di: DependencyInjector, db: ChainDB) -> str:
+	client = cast(Session, await di.get(Session))
+	sinId, decryptionKey = await confessUnforgiveableSin(task.flag.encode(), client, logger)
+	await db.set('unforgiveableSin', (sinId, decryptionKey))
+	return sinId.decode()
+
+@checker.getflag(1) # TODO: also support partial lookups
+async def getflag1(task: GetflagCheckerTaskMessage, logger: LoggerAdapter, di: DependencyInjector) -> None:
+	db = await di.get(ChainDB)
+	sinId, decryptionKey = cast(tuple[bytes, bytes], await getdb(db, 'unforgiveableSin'))
+
+	client = await di.get(Session)
+	flagString = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
 
 	assert_in(task.flag.encode(), flagString, 'Failed to retrieve flag')
 
@@ -257,6 +361,18 @@ async def havocRandomSin(logger: LoggerAdapter, di: DependencyInjector, random: 
 	client = await di.get(Session)
 
 	_ = await confessSin(noise(10, 20, random), client, logger)
+
+@checker.havoc(2)
+async def havocFrequentUnforgiveableSin(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
+	client = await di.get(Session)
+
+	_ = await confessUnforgiveableRandom(client, logger, random)
+
+@checker.havoc(3)
+async def havocRandomUnforgiveableSin(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
+	client = await di.get(Session)
+
+	_ = await confessUnforgiveableSin(noise(10, 20, random), client, logger)
 
 
 @checker.putnoise(0)

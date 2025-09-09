@@ -9,3 +9,4 @@ meta/.cache/clangd/index
 meta/a.out
 meta/compile_commands.json
 meta/build
+checker/src/gaa
