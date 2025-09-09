@@ -26,14 +26,23 @@ RSA::RSA(int seed) {
 }
 
 mpz_class RSA::generatePrime(unsigned int bits) {
-	// std::cout << "bits: " << bits << '\n';
+	mpz_class randomNumber;
 	mpz_class prime;
-	mpz_urandomb(prime.get_mpz_t(), this->state, bits >> 2);
-	prime += -(prime % 8);
-	prime *= prime;
-	prime *= prime;
-	// std::cout << "prime: " << prime.get_str(16) << '\n';
-	mpz_nextprime(prime.get_mpz_t(), prime.get_mpz_t());
+	mpz_class low;
+	mpz_ui_pow_ui(low.get_mpz_t(), 2, bits >> 2);
+	do {
+		mpz_urandomb(randomNumber.get_mpz_t(), state, (bits >> 2) - 1);
+		randomNumber += low;
+		randomNumber += -(randomNumber % 16);
+		randomNumber *= randomNumber;
+		randomNumber *= randomNumber;
+		mpz_nextprime(prime.get_mpz_t(), randomNumber.get_mpz_t());
+		// mpz_class diff = prime - randomNumber;
+		// if (diff > (1 << maxbitdiff)) {
+		// 	std::cout << "diff: " << diff.get_str(10) << '\n';
+		// }
+	// } while (prime - randomNumber >= (1 << maxbitdiff));
+	} while (false);
 	return prime;
 };
 

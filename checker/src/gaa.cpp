@@ -73,6 +73,9 @@ std::pair<mpz_class, mpz_class> factor(const mpz_class& N, const mpz_class& rp, 
 	while (true) {
 		mpz_class term = N_sqrt - i;
 		mpz_class sigma = term * term;
+		if (sigma == 0) {
+			continue;
+		}
 		mpz_class z = (N - rp_mul_rq) % sigma;
 
 		// Find roots of the quadratic equation.
@@ -106,66 +109,55 @@ std::pair<mpz_class, mpz_class> factor(const mpz_class& N, const mpz_class& rp, 
 }
 
 std::pair<mpz_class, mpz_class> blindfactor(const mpz_class& N, const mpz_class& rp = 0, const mpz_class& rq = 0) {
-	const int bailoutThreshold = 1 << 22;
-	int initialIters = 4096;
+	const int bailoutThreshold = 1 << 20;
+	int initialIters = 1024;
 	mpz_class mod = (1 << maxbitdiff);
 	mpz_class Nred = N % mod;
 	std::vector<std::pair<mpz_class, mpz_class>> candidates;
-	size_t cheat = 0;
 	for (mpz_class a = 1; a < mod; a += 2) {
 		mpz_class a_inv;
 		mpz_invert(a_inv.get_mpz_t(), a.get_mpz_t(), mod.get_mpz_t());
 		mpz_class b = (a_inv * Nred) % mod;
-		// if (a == rp) {
-		// 	std::cout << "a: " << a.get_str(10) << ", b: " << b.get_str(10) << '\n';
-		// 	std::cout << "rp: " << rp.get_str(10) << ", rq: " << rq.get_str(10) << '\n';
-		// }
 		candidates.push_back({a, b});
 	}
 	for (int iters = initialIters; iters <= bailoutThreshold; iters *= 4) {
 		if (iters != initialIters) {
-			std::cout << "Expanding to: " << iters << '\n';
+			// std::cout << "Expanding to: " << iters << '\n';
 		}
 		for (size_t ctr = 0; ctr < candidates.size(); ++ctr) {
 			std::pair<mpz_class, mpz_class> ret = factor(N, candidates[ctr].first, candidates[ctr].second, iters);
 			if (ret.first != 1) {
-				// std::cout << "WORKED!" << std::endl;
 				return ret;
 			}
 		}
 	}
 
-	std::cout << "FAILED!" << std::endl;
+	// std::cout << "FAILED!" << std::endl;
 	return {1, 1};
 }
 
-int main(int argc, char* argv[]) {
+void test() {
 	gmp_randinit_default(state);
 	gmp_randseed_ui(state, 0x69420);
 	int bits = 1024;
 	int bitsPerPrime = bits >> 1;
 	std::vector<std::tuple<mpz_class, mpz_class, mpz_class>> workload;
 	auto genstart = std::chrono::high_resolution_clock::now();
-	int iters = 10'000;
-	// int iters = 1'00;
-	// mpz_class avgPrimeGap = 0;
+	int iters = 4'00;
+	// int iters = 1'000;
 	for (int idx = 0; idx < iters; ++idx) {
 		mpz_class p = generatePrime(bitsPerPrime);
 		mpz_class q = generatePrime(bitsPerPrime);
 		mpz_class N = p * q;
-		// mpz_class rp = p % (1 << (4 * 3));
-		// mpz_class rq = q % (1 << (4 * 3));
 		mpz_class rp = p % (1 << maxbitdiff);
 		mpz_class rq = q % (1 << maxbitdiff);
-		// avgPrimeGap += rp;
+		// avgPrimeGap += rp; C++ gmp read in big number from std cin 
 		// avgPrimeGap += rq;
 		workload.push_back({N, rp, rq});
 	}
 
-	// blindfactor(std::get<0>(workload[0]));
-	// exit(0);
+	std::cout << "N = " << generatePrime(bitsPerPrime) * generatePrime(bitsPerPrime) << '\n';
 
-	// std::cout << "primeGap: " << (double)(avgPrimeGap.get_ui()) / iters << '\n';
 	auto genend = std::chrono::high_resolution_clock::now();
     auto gentime = std::chrono::duration_cast<std::chrono::milliseconds>(genend - genstart);
 	std::cout << "Generation time: " << gentime.count() << " ms (" << gentime.count() / iters << " ms/gen)\n";
@@ -184,6 +176,18 @@ int main(int argc, char* argv[]) {
 	std::cout << "Factoring time: " << factortime.count() << " ms (" << factortime.count() / iters << " ms/fac)\n";
 	std::cout << "Fails: " << fails << '\n';
 	std::cout << "Iter/fac: " << (double)(totalIters.get_ui()) / iters << '\n';
+}
 
-	return 0;
+int main(int argc, char* argv[]) {
+	// test();
+	mpz_class N;
+	if (argc == 1) {
+		std::cin >> N;
+	} else if (argc == 2) {
+		assert(mpz_set_str(N.get_mpz_t(), argv[1], 0) == 0);
+	} else {
+		assert(false);
+	}
+	std::pair<mpz_class, mpz_class> fac = blindfactor(N);
+	std::cout << fac.first.get_str(10) << ", " << fac.second.get_str(10) << std::endl;
 }

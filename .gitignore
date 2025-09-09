@@ -10,3 +10,5 @@ meta/a.out
 meta/compile_commands.json
 meta/build
 checker/src/gaa
+checker/src/.gdb_history
+checker/src/.keep

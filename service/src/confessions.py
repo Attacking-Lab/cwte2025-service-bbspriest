@@ -50,7 +50,11 @@ class Confession:
 
 	def putUnforgivableConfession(self):
 		insert(self.content, self.sinId, self.unforgivable)
-		decryptionKey = randrange(2**63)
+		storedKey = keys.find_one({'_id': self.sinId})
+		if storedKey is None:
+			decryptionKey = randrange(2**63)
+		else:
+			decryptionKey = storedKey['decryptionKey']
 		obj = {'_id': self.sinId, 'decryptionKey': decryptionKey}
 		keys.update_one({'_id': obj['_id']}, {'$set': obj}, upsert = True)
 

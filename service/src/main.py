@@ -113,7 +113,7 @@ class ThreadedTCPRequestHandler(socketserver.StreamRequestHandler):
 		decryptionKey = self.getNumber()
 		decryptedConfession = confession.decryptConfession(decryptionKey)
 		if decryptedConfession is None:
-			self.wfile.write(b'Invalid absolution signature. This incident will be reported.\n')
+			self.wfile.write(b'Invalid decryption key. This incident will be reported.\n')
 			return
 
 		self.wfile.write(f'The sin "{decryptedConfession.decode()}" has already been logged.\n'.encode())

@@ -21,6 +21,9 @@ from crypto import *
 
 from random import Random
 from biasednonce import recover_private_key
+from math import gcd
+
+import subprocess
 
 checker = Enochecker('BBSPriest', 9999)
 app = lambda: checker.app # here because it was in fireworx and stldoctor
@@ -179,10 +182,12 @@ async def retrieveUnforgiveableSin(sinId: bytes, decryptionKey: bytes, client: S
 		client.sendline(sinId)
 		resp = await client.recvuntil(b'> ')
 		assert b'Found confession' in resp, 'Confession not found' # TODO: maybe make sure the service isn't lying about finding a confession?
+		ct = resp.partition(b'sion ')[2]
+		ct = ct[:ct.find(b'\n')]
 		client.sendline(decryptionKey)
 
 		ret = await client.recvline()
-		return ret
+		return ret, ct
 	except AssertionError:
 		logger.critical('Service behaved wrongly while looking up sin confession')
 		raise MumbleException('Failed to retrieve sin')
@@ -290,7 +295,7 @@ async def confessUnforgiveableGiven(client: Session, logger: LoggerAdapter, sinI
 	# except:
 	# 	raise MumbleException('Wrong signature')
 
-	return sinId, decryptionKey
+	return sin, sinId, decryptionKey
 
 async def confessRandom(client: Session, logger: LoggerAdapter, random: Random, pubkey: Point):
 	sinIdx = random.randrange(len(frequentSins))
@@ -299,6 +304,31 @@ async def confessRandom(client: Session, logger: LoggerAdapter, random: Random, 
 async def confessUnforgiveableRandom(client: Session, logger: LoggerAdapter, random: Random):
 	sinIdx = random.randrange(len(frequentUnforgiveableSins))
 	return await confessUnforgiveableGiven(client, logger, sinIdx)
+
+async def recoverN(client: Session, logger: LoggerAdapter, random: Random):
+	e = 0x10001
+	# sins = [b'1', b'2', b'3']
+	sins = [b'X', b'Y', b'Z']
+	sinId, decryptionKey = await confessUnforgiveableSin(sins[0], client, logger)
+	_, ct = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
+	N = pow(sins[0][0], e) - int(ct, 16)
+	for idx in range(1, 3):
+		sinId, decryptionKey = await confessUnforgiveableSin(sins[idx], client, logger)
+		_, ct = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
+		mulN = pow(sins[idx][0], e, N) - int(ct, 16)
+		N = gcd(N, mulN)
+	
+	assert N != 1, 'N recovery failed. gcd = 1'
+
+	# clear small factors
+	while N & 1 == 0:
+		N >>= 1
+
+	for p in range(3, 21, 2):
+		while N % p == 0:
+			N //= p
+	
+	return N
 
 @checker.register_dependency
 def _get_session(socket: AsyncSocket, logger: LoggerAdapter) -> Session:
@@ -345,7 +375,7 @@ async def getflag1(task: GetflagCheckerTaskMessage, logger: LoggerAdapter, di: D
 	sinId, decryptionKey = cast(tuple[bytes, bytes], await getdb(db, 'unforgiveableSin'))
 
 	client = await di.get(Session)
-	flagString = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
+	flagString, ct = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
 
 	assert_in(task.flag.encode(), flagString, 'Failed to retrieve flag')
 
@@ -414,6 +444,45 @@ async def getnoiseRandom(logger: LoggerAdapter, di: DependencyInjector) -> None:
 
 	assert_in(sin, flagString, 'Failed to retrieve noise')
 
+@checker.putnoise(2)
+async def putnoisUnforgiveableeFrequent(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
+	db = await di.get(ChainDB)
+	client = await di.get(Session)
+
+	sin, sinId, decryptionKey = await confessUnforgiveableRandom(client, logger, random)
+	await db.set('unforgivableSin', (sin, sinId, decryptionKey))
+
+@checker.getnoise(2)
+async def getnoiseUnforgiveableFrequent(logger: LoggerAdapter, di: DependencyInjector) -> None:
+	db = await di.get(ChainDB)
+	sin, sinId, decryptionKey = cast(tuple[bytes, bytes, bytes], await getdb(db, 'unforgivableSin'))
+
+	client = await di.get(Session)
+	flagString, _ = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
+
+	assert_in(sin, flagString, 'Failed to retrieve noise')
+
+# TODO
+@checker.putnoise(3)
+async def putnoiseUnforgiveableRandom(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
+	db = await di.get(ChainDB)
+	client = await di.get(Session)
+
+	sin = noise(10, 20, random)
+	sinId, decryptionKey = await confessUnforgiveableSin(sin, client, logger)
+
+	await db.set('unforgivableSin', (sin, sinId, decryptionKey))
+
+@checker.getnoise(3)
+async def getnoiseUnforgiveableRandom(logger: LoggerAdapter, di: DependencyInjector) -> None:
+	db = await di.get(ChainDB)
+	sin, sinId, decryptionKey = cast(tuple[bytes, bytes, bytes], await getdb(db, 'unforgivableSin'))
+
+	client = await di.get(Session)
+	flagString, _ = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
+
+	assert_in(sin, flagString, 'Failed to retrieve noise')
+
 
 @checker.exploit(0)
 async def badGenerator(task: ExploitCheckerTaskMessage, di: DependencyInjector, logger: LoggerAdapter):
@@ -460,13 +529,51 @@ async def biasedNonceVuln(task: ExploitCheckerTaskMessage, di: DependencyInjecto
 	signature = signraw(int(task.attack_info, 16), recoveredPriv)
 	flagString = await retrieveSin(task.attack_info.encode(), f'({signature[0]}, {signature[1]})'.encode(), client, logger)
 
-
-
 	if flag := searcher.search_flag(flagString):
 		return flag
 
 	raise MumbleException('Flagstore 1 exploit 1 (badGenerator) failed')
 
+@checker.exploit(2)
+async def GAAVuln(task: ExploitCheckerTaskMessage, di: DependencyInjector, logger: LoggerAdapter, random: Random):
+	searcher = await di.get(FlagSearcher)
+	logger = await di.get(LoggerAdapter)
+	client = await di.get(Session)
+	assert task.attack_info is not None
+
+	N = await recoverN(client, logger, random)
+	p, q = map(int, subprocess.check_output(['./gaa', str(N)]).strip().split(b', '))
+	if p == 1 or q == 1:
+		raise InternalErrorException(f'Failed to factor {N}')
+	phi = (p - 1) * (q - 1)
+	e = 0x10001
+	d = pow(e, -1, phi)
+
+	try:
+		banner = await client.recvuntil(b'> ')
+		assert b'555-123' in banner
+
+		client.sendline(b'3')
+		resp = await client.recvuntil(b'> ')
+		assert b'an unforgivable sin' in resp, 'Couldn\'t use option 3'
+
+		client.sendline(task.attack_info.encode())
+		resp = await client.recvuntil(b'> ')
+		assert b'Found confession' in resp, 'Confession not found' # TODO: maybe make sure the service isn't lying about finding a confession?
+	except AssertionError:
+		logger.critical('Service behaved wrongly while looking up sin confession for GAA')
+		raise MumbleException('Failed to retrieve sin')
+
+	ctpart = resp.partition(b'sion ')[2]
+	ct = int(ctpart[:ctpart.find(b'\n')], 16)
+
+	dec = pow(ct, d, N)
+	pt = dec.to_bytes((dec.bit_length() + 7) // 8)
+
+	if flag := searcher.search_flag(pt):
+		return flag
+
+	raise MumbleException('Flagstore 2 exploit 1 (GAA) failed')
 
 
 if __name__ == "__main__":

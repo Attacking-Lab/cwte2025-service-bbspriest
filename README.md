@@ -43,9 +43,9 @@ Overview
 
 Flags are stored as (normal) confessions, protected by a ECDSA signature.
 
-### Flag Store N
+### Flag Store 2
 
-...
+Flags are stored as unforgivable confessions, and are encrypted with RSA.
 
 Vulnerabilities
 ---------------
