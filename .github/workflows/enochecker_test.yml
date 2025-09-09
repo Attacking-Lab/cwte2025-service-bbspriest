@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    runs-on: arc-runner-dink
+    runs-on: dink-external
     env:
       ENOCHECKER_TEST_CHECKER_PORT: 1813
     steps:
