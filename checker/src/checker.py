@@ -22,6 +22,9 @@ from crypto import *
 from random import Random
 from biasednonce import recover_private_key
 from math import gcd
+from asyncio import gather
+
+from gmpy2 import mpz, gcd as gmpgcd, powmod
 
 import subprocess
 
@@ -305,21 +308,7 @@ async def confessUnforgiveableRandom(client: Session, logger: LoggerAdapter, ran
 	sinIdx = random.randrange(len(frequentUnforgiveableSins))
 	return await confessUnforgiveableGiven(client, logger, sinIdx)
 
-async def recoverN(client: Session, logger: LoggerAdapter, random: Random):
-	e = 0x10001
-	# sins = [b'1', b'2', b'3']
-	sins = [b'X', b'Y', b'Z']
-	sinId, decryptionKey = await confessUnforgiveableSin(sins[0], client, logger)
-	_, ct = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
-	N = pow(sins[0][0], e) - int(ct, 16)
-	for idx in range(1, 3):
-		sinId, decryptionKey = await confessUnforgiveableSin(sins[idx], client, logger)
-		_, ct = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
-		mulN = pow(sins[idx][0], e, N) - int(ct, 16)
-		N = gcd(N, mulN)
-	
-	assert N != 1, 'N recovery failed. gcd = 1'
-
+def postprocessN(N: int):
 	# clear small factors
 	while N & 1 == 0:
 		N >>= 1
@@ -329,6 +318,45 @@ async def recoverN(client: Session, logger: LoggerAdapter, random: Random):
 			N //= p
 	
 	return N
+
+async def recoverN(client: Session, logger: LoggerAdapter):
+	e = 0x10001
+	sins = [b'X', b'Y', b'Z']
+	sinId, decryptionKey = await confessUnforgiveableSin(sins[0], client, logger)
+	_, ct = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
+	# N = pow(sins[0][0], e) - int(ct, 16)
+	N = mpz(sins[0][0]) ** e - int(ct, 16)
+	for idx in range(1, 3):
+		sinId, decryptionKey = await confessUnforgiveableSin(sins[idx], client, logger)
+		_, ct = await retrieveUnforgiveableSin(sinId, decryptionKey, client, logger)
+		mulN = powmod(sins[idx][0], e, N) - int(ct, 16)
+		N = gmpgcd(N, mulN)
+	
+	assert N != 1, 'N recovery failed. gcd = 1'
+
+	
+	return postprocessN(int(N))
+
+async def parallelRecoverN(clients: list[Session], logger: LoggerAdapter, random: Random):
+	assert len(clients) > 1, 'Not enough clients provided'
+	# pick one small noise and rest large. This is because the first noise needs to be raised to the power of 0x10001 over integers, the rest are computed modulo
+	sins = [noise(3, 5, random)] + [noise(10, 20, random) for _ in range(len(clients) - 1)]
+	idkeypairCoro = [confessUnforgiveableSin(sin, client, logger) for sin, client in zip(sins, clients)]
+	idkeypairs = await gather(*idkeypairCoro)
+	ctsCoro = [retrieveUnforgiveableSin(idkeypair[0], idkeypair[1], client, logger) for idkeypair, client in zip(idkeypairs, clients)]
+	cts = await gather(*ctsCoro)
+	N = None
+	expo = 0x10001
+	for idx in range(len(clients)):
+		sin = mpz(int.from_bytes(sins[idx]))
+		ct = mpz(int(cts[idx][1], 16))
+		if N is None:
+			N = sin**expo - ct
+		else:
+			N = gmpgcd(N, powmod(sin, expo, N) - ct)
+	
+	return postprocessN(int(N))
+
 
 @checker.register_dependency
 def _get_session(socket: AsyncSocket, logger: LoggerAdapter) -> Session:
@@ -404,6 +432,16 @@ async def havocRandomUnforgiveableSin(logger: LoggerAdapter, di: DependencyInjec
 
 	_ = await confessUnforgiveableSin(noise(10, 20, random), client, logger)
 
+@checker.havoc(4)
+async def havocLietest(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
+	client0 = await di.get(Session)
+	client1 = await di.get(Session)
+	N = await parallelRecoverN([client0, client1], logger, random)
+
+	# NOTE: we aren't testing for N = 1 since a random factor larger than what we filter for could slip past
+	# NOTE: we could address this by adding more clients, but thats unneccesary since a >= 512 bit factor slipping past is practically impossible
+	if N.bit_length() < 512:
+		raise MumbleException('Service caught lying about unforgivable confessions smh')
 
 @checker.putnoise(0)
 async def putnoiseFrequent(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
@@ -483,7 +521,6 @@ async def getnoiseUnforgiveableRandom(logger: LoggerAdapter, di: DependencyInjec
 
 	assert_in(sin, flagString, 'Failed to retrieve noise')
 
-
 @checker.exploit(0)
 async def badGenerator(task: ExploitCheckerTaskMessage, di: DependencyInjector, logger: LoggerAdapter):
 	searcher = await di.get(FlagSearcher)
@@ -541,7 +578,7 @@ async def GAAVuln(task: ExploitCheckerTaskMessage, di: DependencyInjector, logge
 	client = await di.get(Session)
 	assert task.attack_info is not None
 
-	N = await recoverN(client, logger, random)
+	N = await recoverN(client, logger)
 	p, q = map(int, subprocess.check_output(['./gaa', str(N)]).strip().split(b', '))
 	if p == 1 or q == 1:
 		raise InternalErrorException(f'Failed to factor {N}')
