@@ -10,6 +10,7 @@ services:
       - MONGO_PORT=27017
       - MONGO_USER=bbspriest_checker
       - MONGO_PASSWORD=bbspriest_checker
+    restart: unless-stopped
     depends_on:
       - mongo
 
@@ -20,6 +21,7 @@ services:
       - 27017:27017
     volumes:
       - chaindb:/data/db
+    restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: bbspriest_checker
       MONGO_INITDB_ROOT_PASSWORD: bbspriest_checker
