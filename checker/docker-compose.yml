@@ -1,3 +1,4 @@
+name: bbspriest-checker
 services:
   checker:
     container_name: bbspriest-checker
