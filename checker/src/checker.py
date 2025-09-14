@@ -337,7 +337,7 @@ async def recoverN(client: Session, logger: LoggerAdapter):
 	
 	return postprocessN(int(N))
 
-async def parallelRecoverN(clients: list[Session], logger: LoggerAdapter, random: Random):
+async def parallelRecoverN(clients: list[Session], logger: LoggerAdapter, random: Random, error: str):
 	assert len(clients) > 1, 'Not enough clients provided'
 	# pick one small noise and rest large. This is because the first noise needs to be raised to the power of 0x10001 over integers, the rest are computed modulo
 	sins = [noise(3, 5, random)] + [noise(10, 20, random) for _ in range(len(clients) - 1)]
@@ -347,15 +347,18 @@ async def parallelRecoverN(clients: list[Session], logger: LoggerAdapter, random
 	cts = await gather(*ctsCoro)
 	N = None
 	expo = 0x10001
-	for idx in range(len(clients)):
-		sin = mpz(int.from_bytes(sins[idx]))
-		ct = mpz(int(cts[idx][1], 16))
-		if N is None:
-			N = sin**expo - ct
-		else:
-			N = gmpgcd(N, powmod(sin, expo, N) - ct)
+	try:
+		for idx in range(len(clients)):
+			sin = mpz(int.from_bytes(sins[idx]))
+			ct = mpz(int(cts[idx][1], 16))
+			if N is None:
+				N = sin**expo - ct
+			else:
+				N = gmpgcd(N, powmod(sin, expo, N) - ct)
 	
-	return postprocessN(int(N))
+		return postprocessN(int(N))
+	except:	
+		raise MumbleException(error)
 
 
 @checker.register_dependency
@@ -434,14 +437,15 @@ async def havocRandomUnforgiveableSin(logger: LoggerAdapter, di: DependencyInjec
 
 @checker.havoc(4)
 async def havocLietest(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
+	error = 'service caught lying about unforgivable confessions smh'
 	client0 = await di.get(Session)
 	client1 = await di.get(Session)
-	N = await parallelRecoverN([client0, client1], logger, random)
+	N = await parallelRecoverN([client0, client1], logger, random, error)
 
 	# NOTE: we aren't testing for N = 1 since a random factor larger than what we filter for could slip past
 	# NOTE: we could address this by adding more clients, but thats unneccesary since a >= 512 bit factor slipping past is practically impossible
 	if N.bit_length() < 512:
-		raise MumbleException('Service caught lying about unforgivable confessions smh')
+		raise MumbleException('service caught lying about unforgivable confessions smh')
 
 @checker.putnoise(0)
 async def putnoiseFrequent(logger: LoggerAdapter, di: DependencyInjector, random: Random) -> None:
