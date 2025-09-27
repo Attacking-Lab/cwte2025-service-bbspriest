@@ -14,16 +14,16 @@ ENV TERM=linux
 ENV TERMINFO=/etc/terminfo
 
 RUN useradd -ms /bin/bash checker
-RUN python3 -m pip install --break-system-packages uv
+RUN python3 -m pip install --break-system-packages uv==0.8.15 git-pass-helper==0.2.1
 
 WORKDIR /checker
 COPY ./src/ .
 RUN chown checker -R /checker
 
 USER checker
-RUN git config --global credential.https://github.com.helper "store --file /tmp/.git-credentials"
-RUN echo "https://token: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@github.com" > /tmp/.git-credentials
-RUN uv sync --exact --frozen
+RUN --mount=type=secret,id=github-pat,env=GITHUB_PAT \
+  git-pass -p "${GITHUB_PAT:?GITHUB PAT not set}" -- \
+    uv sync --frozen --exact
 RUN make
 
 ENTRYPOINT [ "uv", "run", "--no-sync", "gunicorn", "-c", "gunicorn.conf.py", "checker:app" ]

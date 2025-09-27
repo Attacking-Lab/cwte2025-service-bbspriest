@@ -12,3 +12,4 @@ meta/build
 checker/src/gaa
 checker/src/.gdb_history
 checker/src/.keep
+.env

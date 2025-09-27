@@ -2,7 +2,10 @@ name: bbspriest-checker
 services:
   checker:
     container_name: bbspriest-checker
-    build: .
+    build:
+      context: .
+      secrets:
+        - github-pat
     ports:
       - 8000:8000
     environment:
@@ -30,6 +33,11 @@ services:
 volumes:
   chaindb:
     name: bbspriest-chaindb
+
 networks:
   default:
     name: bbspriest-checker
+
+secrets:
+  github-pat:
+    environment: GITHUB_PAT
